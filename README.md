@@ -145,4 +145,38 @@ ExpoBleRegion.addListener('onBluetoothStateChanged', ({ state }) => {
 
 
 
+## Running the Example App
+
+To test out the module using the provided example app:
+
+1. Clone this repository to your local machine.
+2. In the root directory, install dependencies and build the module:
+   ```bash
+   npm install
+   npm run build
+   ```
+3. Navigate into the `example` directory and install its dependencies:
+   ```bash
+   cd example
+   npm install
+   ```
+4. **Option A: Local Build (Requires Mac)**
+   Run the app on an iOS device using your local Xcode:
+   ```bash
+   npx expo run:ios
+   ```
+
+   **Option B: EAS Build (Cloud Build / Windows Users)**
+   If you are on Windows or prefer building in the cloud, use Expo Application Services:
+   ```bash
+   npm install -g eas-cli
+   eas login
+   eas build -p ios --profile development
+   ```
+   *This will generate a `.tar.gz` or `.ipa` that you can install directly onto your physical device.*
+
+*(Note: To fully test background beacon capabilities, you must deploy this to a physical iPhone rather than a simulator).*
+
+## Contributing
+
 Contributions are welcome! Please ensure that any added features remain un-opinionated and delegate complex JavaScript execution to `expo-task-manager`.
