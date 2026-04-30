@@ -1,0 +1,18 @@
+{
+  "platforms": [
+    "apple"
+  ],
+  "apple": {
+    "modules": [
+      "ExpoBleRegionModule"
+    ],
+    "appDelegateSubscribers": [
+      "ExpoBleRegionAppDelegate"
+    ]
+  },
+  "android": {
+    "modules": [
+      "expo.modules.bleregion.ExpoBleRegionModule"
+    ]
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "expo": {
+    "name": "expo-ble-region-example",
+    "slug": "expo-ble-region-example",
+    "scheme": "expo-ble-region-example",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "expo.modules.bleregion.example",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": [
+          "location",
+          "bluetooth-central"
+        ],
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "This app needs location access to monitor beacons in the background.",
+        "NSLocationWhenInUseUsageDescription": "This app needs location access to monitor beacons while in use.",
+        "NSBluetoothAlwaysUsageDescription": "This app needs Bluetooth to detect nearby beacons."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "package": "expo.modules.bleregion.example"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "ca1fd4b2-6a7a-4efa-86e9-6fb7bc87a8f9"
+      }
+    }
+  }
+}
