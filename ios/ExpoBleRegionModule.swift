@@ -1,7 +1,6 @@
 import ExpoModulesCore
 import CoreBluetooth
 import CoreLocation
-import UserNotifications
 
 /// Helper method to convert geolocation permission status to a string representation.
 private func statusToString(_ status: CLAuthorizationStatus) -> String {
@@ -15,16 +14,37 @@ private func statusToString(_ status: CLAuthorizationStatus) -> String {
   }
 }
 
+@objc
+public class ExpoBleRegionTaskConsumer: NSObject, EXTaskConsumerInterface {
+  public var task: EXTaskInterface?
+
+  public func taskType() -> String {
+    return "bleRegion"
+  }
+
+  public func didRegisterTask(_ task: EXTaskInterface) {
+    self.task = task
+    BleRegionManager.shared.taskConsumer = self
+  }
+
+  public func setOptions(_ options: [AnyHashable: Any]) { }
+
+  public func didUnregister() {
+    BleRegionManager.shared.taskConsumer = nil
+  }
+}
+
 /// The BleRegionManager class handles all callbacks from CoreLocation and CoreBluetooth.
 /// Because Expo Modules cannot inherit from NSObject directly, we use this separate delegate class.
 @objc
-public class BleRegionManager: NSObject, CLLocationManagerDelegate, CBCentralManagerDelegate, UNUserNotificationCenterDelegate {
+public class BleRegionManager: NSObject, CLLocationManagerDelegate, CBCentralManagerDelegate {
   public static let shared = BleRegionManager()
   
   var locationManager: CLLocationManager?
   var beaconRegion: CLBeaconRegion?
   var centralManager: CBCentralManager?
   
+  var taskConsumer: ExpoBleRegionTaskConsumer?
   var onEvent: ((String, [String: Any]) -> Void)?
   
   private override init() {
@@ -37,36 +57,6 @@ public class BleRegionManager: NSObject, CLLocationManagerDelegate, CBCentralMan
         self.locationManager = CLLocationManager()
         self.locationManager?.delegate = self
       }
-    }
-    UNUserNotificationCenter.current().delegate = self
-  }
-
-  /// Triggers a local notification with a specific title and body.
-  func sendLocalNotification(title: String, body: String) {
-    let content = UNMutableNotificationContent()
-    content.title = title
-    content.body = body
-    content.sound = .default
-
-    let request = UNNotificationRequest(
-      identifier: UUID().uuidString,
-      content: content,
-      trigger: nil
-    )
-
-    UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
-  }
-
-  /// Ensures notifications show up even when the app is in the foreground
-  public func userNotificationCenter(
-    _ center: UNUserNotificationCenter,
-    willPresent notification: UNNotification,
-    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
-  ) {
-    if #available(iOS 14.0, *) {
-      completionHandler([.banner, .sound])
-    } else {
-      completionHandler([.alert, .sound])
     }
   }
 
@@ -88,8 +78,8 @@ public class BleRegionManager: NSObject, CLLocationManagerDelegate, CBCentralMan
   /// Called when the user enters the monitored iBeacon region.
   public func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
     if let beaconRegion = region as? CLBeaconRegion {
-      sendLocalNotification(title: "Region Event", body: "Entered region: \(region.identifier)")
       onEvent?("onEnterRegion", ["region": beaconRegion.identifier])
+      taskConsumer?.task?.execute(withData: ["eventType": "onEnterRegion", "region": beaconRegion.identifier], withError: nil)
     }
   }
 
@@ -107,8 +97,8 @@ public class BleRegionManager: NSObject, CLLocationManagerDelegate, CBCentralMan
   /// Called when the user exits the monitored iBeacon region.
   public func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
     if let beaconRegion = region as? CLBeaconRegion {
-      sendLocalNotification(title: "Region Event", body: "Exit region: \(region.identifier)")
       onEvent?("onExitRegion", ["region": beaconRegion.identifier])
+      taskConsumer?.task?.execute(withData: ["eventType": "onExitRegion", "region": beaconRegion.identifier], withError: nil)
     }
   }
 
@@ -124,6 +114,7 @@ public class BleRegionManager: NSObject, CLLocationManagerDelegate, CBCentralMan
       ]
     }
     onEvent?("onBeaconsDetected", ["beacons": beaconArray])
+    taskConsumer?.task?.execute(withData: ["eventType": "onBeaconsDetected", "beacons": beaconArray], withError: nil)
   }
 
   /// Called when the user's location authorization status changes (e.g., they grant permission).
@@ -168,23 +159,36 @@ public class ExpoBleRegionModule: Module {
       }
     }
 
-    // A simple test function.
-    Function("hello") {
-      return "Hello world! 👋"
-    }
-
-    // Triggers a local iOS push notification.
-    Function("sendLocalNotification") { (title: String, body: String) in
-      BleRegionManager.shared.sendLocalNotification(title: title, body: body)
-    }
-
     // Starts scanning for beacons with the provided UUID.
     Function("startScanning") { (uuidStr: String, config: [String: Any]?) in
+      self.startScanning(uuidStr: uuidStr, config: config)
+    }
+    
+    // Starts scanning and registers a task for background execution.
+    AsyncFunction("startScanningWithTask") { (uuidStr: String, taskName: String, config: [String: Any]?) in
+      guard let taskManager: EXTaskManagerInterface = self.appContext?.legacyModule(implementing: EXTaskManagerInterface.self) else {
+        throw Exception(name: "TaskManagerUnavailable", description: "Expo task manager is unavailable.")
+      }
+      
+      // Register task manager consumer
+      taskManager.registerTask(withName: taskName, consumer: ExpoBleRegionTaskConsumer.self, options: config ?? [:])
+      
       self.startScanning(uuidStr: uuidStr, config: config)
     }
 
     // Stops scanning and cleans up the region/location manager.
     Function("stopScanning") {
+      self.stopScanning()
+    }
+    
+    // Stops the task manager and scanning.
+    AsyncFunction("stopScanningTask") { (taskName: String) in
+      guard let taskManager: EXTaskManagerInterface = self.appContext?.legacyModule(implementing: EXTaskManagerInterface.self) else {
+        throw Exception(name: "TaskManagerUnavailable", description: "Expo task manager is unavailable.")
+      }
+      if taskManager.hasRegisteredTask(withName: taskName) {
+        taskManager.unregisterTask(withName: taskName, consumerClass: ExpoBleRegionTaskConsumer.self)
+      }
       self.stopScanning()
     }
 
@@ -213,15 +217,6 @@ public class ExpoBleRegionModule: Module {
 
   /// Starts monitoring and ranging for an iBeacon region using the given UUID.
   private func startScanning(uuidStr: String, config: [String: Any]?) {
-    // Request permission to send local notifications
-    UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
-      if granted {
-        print("Notifications allowed")
-      } else {
-        print("Notifications not allowed")
-      }
-    }
-
     // Execute location manager setup on the main thread
     DispatchQueue.main.async {
       let manager = BleRegionManager.shared

@@ -6,13 +6,7 @@
 import ExpoBleRegionModule from './ExpoBleRegionModule';
 import { EventSubscription } from 'expo-modules-core';
 
-export function hello(): string {
-  return ExpoBleRegionModule.hello();
-}
 
-export function sendLocalNotification(title: string, body: string): void {
-  ExpoBleRegionModule.sendLocalNotification(title, body);
-}
 
 export function startScanning(uuid: string, config?: Record<string, any>): void {
   ExpoBleRegionModule.startScanning(uuid, config);
@@ -20,6 +14,14 @@ export function startScanning(uuid: string, config?: Record<string, any>): void 
 
 export function stopScanning(): void {
   ExpoBleRegionModule.stopScanning();
+}
+
+export function startScanningWithTask(uuid: string, taskName: string, config?: Record<string, any>): void {
+  ExpoBleRegionModule.startScanningWithTask(uuid, taskName, config);
+}
+
+export function stopScanningTask(taskName: string): void {
+  ExpoBleRegionModule.stopScanningTask(taskName);
 }
 
 export function initializeBluetoothManager(): void {

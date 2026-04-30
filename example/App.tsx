@@ -1,11 +1,48 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, Button, ScrollView, StyleSheet } from 'react-native';
 import * as ExpoBleRegion from 'expo-ble-region';
+import * as TaskManager from 'expo-task-manager';
+
+const ATTENDANCE_TASK = 'ATTENDANCE_TASK';
+
+// Define the background task outside of the component
+TaskManager.defineTask(ATTENDANCE_TASK, async ({ data, error }) => {
+  if (error) {
+    console.error('Task Error:', error);
+    return;
+  }
+  if (data) {
+    const eventType = (data as any).eventType;
+    const beacons = (data as any).beacons || [];
+    const region = (data as any).region;
+
+    console.log(`[Background Task] Event: ${eventType}`, data);
+
+    // Example Attendance Logic: 
+    // If the event is beacons detected, and we find our specific beacon
+    if (eventType === 'onBeaconsDetected' && beacons.length > 0) {
+      console.log(`[Background Task] Detected ${beacons.length} beacons!`);
+
+      // TODO: Add logic to count 3 detections (e.g. using AsyncStorage or global variable if engine stays alive)
+      // Then send the HTTP request:
+      // fetch('https://your-server.com/attendance', { method: 'POST', body: JSON.stringify({ event: 'clock-in', beacons }) });
+    }
+
+    if (eventType === 'onEnterRegion') {
+      console.log(`[Background Task] Entered region: ${region}`);
+    }
+
+    if (eventType === 'onExitRegion') {
+      console.log(`[Background Task] Exited region: ${region}`);
+    }
+  }
+});
 
 export default function App() {
   const [authStatus, setAuthStatus] = useState<string>('Unknown');
   const [btState, setBtState] = useState<string>('Unknown');
   const [events, setEvents] = useState<string[]>([]);
+  const [isTaskRegistered, setIsTaskRegistered] = useState(false);
 
   // Helper to append logs to our UI
   const addEvent = (msg: string) => {
@@ -13,6 +50,9 @@ export default function App() {
   };
 
   useEffect(() => {
+    // Check if task is already registered
+    TaskManager.isTaskRegisteredAsync(ATTENDANCE_TASK).then(setIsTaskRegistered);
+
     // Listen to module events
     const btSub = ExpoBleRegion.addListener('onBluetoothStateChanged', (event: { state: string }) => {
       setBtState(event.state);
@@ -59,7 +99,6 @@ export default function App() {
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.header}>ExpoBleRegion Tester</Text>
-      <Text style={styles.subtitle}>Test Hello: {ExpoBleRegion.hello()}</Text>
 
       <View style={styles.section}>
         <Text style={styles.title}>Location Permissions</Text>
@@ -78,11 +117,19 @@ export default function App() {
       <View style={styles.section}>
         <Text style={styles.title}>Beacon Scanning</Text>
         <Button
-          title="Start Scanning (Test UUID)"
+          title="Start Scanning (Normal)"
           onPress={() => {
             // Random valid UUID for testing
             ExpoBleRegion.startScanning('108535a9-78fc-4547-9de7-903bec119230', {});
-            addEvent('Started Scanning...');
+            addEvent('Started Scanning (Normal)...');
+          }}
+        />
+        <Button
+          title="Start Scanning (Background Task)"
+          onPress={() => {
+            ExpoBleRegion.startScanningWithTask('108535a9-78fc-4547-9de7-903bec119230', ATTENDANCE_TASK, {});
+            addEvent('Started Scanning with Background Task...');
+            setIsTaskRegistered(true);
           }}
         />
         <Button
@@ -92,15 +139,17 @@ export default function App() {
             addEvent('Stopped Scanning.');
           }}
         />
+        <Button
+          title="Stop Scanning (Task)"
+          onPress={() => {
+            ExpoBleRegion.stopScanningTask(ATTENDANCE_TASK);
+            addEvent('Stopped Scanning Task.');
+            setIsTaskRegistered(false);
+          }}
+        />
+        <Text style={styles.status}>Task Registered: {isTaskRegistered ? 'Yes' : 'No'}</Text>
       </View>
 
-      <View style={styles.section}>
-        <Text style={styles.title}>Local Notifications</Text>
-        <Button
-          title="Send Test Notification"
-          onPress={() => ExpoBleRegion.sendLocalNotification('Test Title', 'This is a test notification from JS')}
-        />
-      </View>
 
       <View style={[styles.section, { flex: 1 }]}>
         <Text style={styles.title}>Event Logs</Text>

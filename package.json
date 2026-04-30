@@ -37,6 +37,7 @@
   },
   "peerDependencies": {
     "expo": "*",
+    "expo-task-manager": "*",
     "react": "*",
     "react-native": "*"
   }

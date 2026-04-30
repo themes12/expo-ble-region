@@ -3,10 +3,10 @@ import { NativeModule, requireNativeModule } from 'expo-modules-core';
 import { ExpoBleRegionModuleEvents } from './ExpoBleRegion.types';
 
 declare class ExpoBleRegionModule extends NativeModule<ExpoBleRegionModuleEvents> {
-  hello(): string;
-  sendLocalNotification(title: string, body: string): void;
   startScanning(uuid: string, config?: Record<string, any>): void;
+  startScanningWithTask(uuid: string, taskName: string, config?: Record<string, any>): void;
   stopScanning(): void;
+  stopScanningTask(taskName?: string): void;
   initializeBluetoothManager(): void;
   requestAlwaysAuthorization(): Promise<{ status: string }>;
   requestWhenInUseAuthorization(): Promise<{ status: string }>;
