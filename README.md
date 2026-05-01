@@ -1,22 +1,36 @@
 # expo-ble-region
 
-A native Expo module for iOS that enables BLE beacon region monitoring (iBeacon) with background enter/exit events. This module uses iOS's `CoreLocation` and integrates beautifully with Expo's `TaskManager` to ensure background JavaScript execution even when the app is completely killed.
+[![npm](https://img.shields.io/npm/v/expo-ble-region)](https://www.npmjs.com/package/expo-ble-region)
+
+A native Expo module for iOS iBeacon region monitoring with foreground and background enter/exit events. Uses `CoreLocation` for beacon detection and integrates with Expo's `TaskManager` for headless background JavaScript execution — even when the app is terminated.
+
+## Features
+
+- **Foreground monitoring** — Real-time enter/exit/ranging events via JS listeners
+- **Background monitoring** — Headless JS task execution via `expo-task-manager`
+- **State persistence** — Survives app termination; iOS relaunches the app for region events
+- **Smart event routing** — Foreground events go to JS listeners, background events go to the task consumer (no duplicate notifications)
+- **Debug events** — `onDebug` event stream for real-time observability of the native state machine
+- **Ranging-based exit fallback** — Detects beacon disappearance even when iOS's `didExitRegion` is delayed
 
 ## Installation
 
 ```bash
 npx expo install expo-ble-region
-npx expo install expo-task-manager # Required for background execution
+npx expo install expo-task-manager
 ```
 
-Add the appropriate permissions to your app's configuration (`app.json`):
+> **Note:** `expo-notifications` is **not** required by the library itself. The example app uses it to demonstrate background notifications, but you can handle enter/exit events however you like.
+
+Add the required permissions to your `app.json`:
+
 ```json
 {
   "expo": {
     "ios": {
       "infoPlist": {
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow app to monitor your location in the background.",
-        "NSLocationWhenInUseUsageDescription": "Allow app to monitor your location while using.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow app to monitor beacons in the background.",
+        "NSLocationWhenInUseUsageDescription": "Allow app to monitor beacons while in use.",
         "NSBluetoothAlwaysUsageDescription": "Allow app to use Bluetooth to detect beacons.",
         "UIBackgroundModes": ["location", "bluetooth-central"]
       }
@@ -25,26 +39,25 @@ Add the appropriate permissions to your app's configuration (`app.json`):
 }
 ```
 
-## API Usage
+## API
 
-### 1. Requesting Permissions
-Before monitoring regions, you must request the necessary Bluetooth and Location permissions.
+### Permissions
 
 ```typescript
 import * as ExpoBleRegion from 'expo-ble-region';
 
 // Get current authorization status
-const status = await ExpoBleRegion.getAuthorizationStatus(); // Returns 'authorizedAlways', 'denied', etc.
+const status = await ExpoBleRegion.getAuthorizationStatus();
+// Returns: 'notDetermined' | 'authorizedWhenInUse' | 'authorizedAlways' | 'denied' | 'restricted'
 
-// Request 'When in Use' permissions
+// Request permissions
 await ExpoBleRegion.requestWhenInUseAuthorization();
-
-// Request 'Always' permissions (Required for background tracking)
-await ExpoBleRegion.requestAlwaysAuthorization();
+await ExpoBleRegion.requestAlwaysAuthorization(); // Required for background monitoring
 ```
 
-### 2. Foreground Monitoring
-If you only need to detect beacons while your app is open, you can simply add listeners to the module events.
+### Foreground Monitoring
+
+Listen for beacon events while the app is open:
 
 ```typescript
 import * as ExpoBleRegion from 'expo-ble-region';
@@ -52,131 +65,169 @@ import { useEffect } from 'react';
 
 export default function App() {
   useEffect(() => {
-    // Fired when entering a beacon region
     const enterSub = ExpoBleRegion.addListener('onEnterRegion', ({ region }) => {
       console.log('Entered region:', region);
     });
 
-    // Fired when exiting a beacon region
     const exitSub = ExpoBleRegion.addListener('onExitRegion', ({ region }) => {
       console.log('Exited region:', region);
     });
 
-    // Fired continuously while ranging beacons inside the region
     const beaconSub = ExpoBleRegion.addListener('onBeaconsDetected', ({ beacons }) => {
       console.log('Beacons detected:', beacons);
+    });
+
+    const errorSub = ExpoBleRegion.addListener('onError', ({ error, region }) => {
+      console.error('Error:', error, region);
     });
 
     return () => {
       enterSub.remove();
       exitSub.remove();
       beaconSub.remove();
+      errorSub.remove();
     };
   }, []);
 
   const startScanning = () => {
-    // Provide your beacon's UUID
-    ExpoBleRegion.startScanning('YOUR-UUID-HERE', {});
+    ExpoBleRegion.startScanning('YOUR-BEACON-UUID', {});
   };
 
   const stopScanning = () => {
     ExpoBleRegion.stopScanning();
   };
-  
+
   // ...
 }
 ```
 
-### 3. Background Task Manager (App Killed/Background)
-If you want to track attendance or run logic while the app is killed, use `TaskManager`.
+### Background Monitoring
 
-**Note:** The Task Manager must be defined outside your React component tree.
+Execute JavaScript when the app is backgrounded or terminated. Define the task **outside** your React component tree:
 
 ```typescript
 import * as TaskManager from 'expo-task-manager';
+import * as Notifications from 'expo-notifications';
 import * as ExpoBleRegion from 'expo-ble-region';
 
-const ATTENDANCE_TASK = 'ATTENDANCE_TASK';
+const BACKGROUND_TASK = 'BACKGROUND_BEACON_TASK';
 
-// 1. Define the task outside of your UI components
-TaskManager.defineTask(ATTENDANCE_TASK, async ({ data, error }) => {
-  if (error) {
-    console.error('Task Error:', error);
-    return;
-  }
-  
+// 1. Define the task at the top level
+TaskManager.defineTask(BACKGROUND_TASK, async ({ data, error }) => {
+  if (error) return;
+
   if (data) {
-    const eventType = (data as any).eventType; // 'onEnterRegion' | 'onExitRegion' | 'onBeaconsDetected'
-    const beacons = (data as any).beacons || [];
-    
-    // Write your background logic here (e.g., HTTP POST requests)
-    if (eventType === 'onBeaconsDetected' && beacons.length > 0) {
-      console.log(`Detected ${beacons.length} beacons in background!`);
+    const { eventType, region, beacons } = data as any;
+
+    if (eventType === 'onEnterRegion') {
+      await Notifications.scheduleNotificationAsync({
+        content: { title: 'Entered Region', body: `Entered ${region}` },
+        trigger: null,
+      });
+    }
+
+    if (eventType === 'onExitRegion') {
+      await Notifications.scheduleNotificationAsync({
+        content: { title: 'Exited Region', body: `Exited ${region}` },
+        trigger: null,
+      });
     }
   }
 });
 
-// 2. Start scanning and link it to the task
+// 2. Start scanning with the task
 export default function App() {
-  const startBackgroundScanning = () => {
-    // Provide the UUID and your Task Name
-    ExpoBleRegion.startScanningWithTask('YOUR-UUID-HERE', ATTENDANCE_TASK, {});
+  const start = async () => {
+    await ExpoBleRegion.startScanningWithTask('YOUR-BEACON-UUID', BACKGROUND_TASK, {});
   };
 
-  const stopBackgroundScanning = () => {
-    ExpoBleRegion.stopScanningTask(ATTENDANCE_TASK);
+  const stop = async () => {
+    await ExpoBleRegion.stopScanningTask(BACKGROUND_TASK);
   };
-  
+
   // ...
 }
 ```
 
-### 4. Utilities
+### Bluetooth State
 
-#### `initializeBluetoothManager(): void`
-Initializes the iOS `CBCentralManager` which enables the `onBluetoothStateChanged` event listener.
 ```typescript
 ExpoBleRegion.initializeBluetoothManager();
 
 ExpoBleRegion.addListener('onBluetoothStateChanged', ({ state }) => {
-  console.log('Bluetooth state:', state); // 'poweredOn', 'poweredOff', etc.
+  console.log('Bluetooth:', state); // 'poweredOn', 'poweredOff', etc.
 });
 ```
 
+### Debug Events
 
+Stream native state machine transitions to your JS code for debugging:
 
-## Running the Example App
+```typescript
+ExpoBleRegion.addListener('onDebug', ({ message }) => {
+  console.log('[Debug]', message);
+});
+```
 
-To test out the module using the provided example app:
+## Events
 
-1. Clone this repository to your local machine.
-2. In the root directory, install dependencies and build the module:
+| Event | Payload | Description |
+|-------|---------|-------------|
+| `onEnterRegion` | `{ region: string }` | Device entered a beacon region |
+| `onExitRegion` | `{ region: string }` | Device exited a beacon region |
+| `onBeaconsDetected` | `{ beacons: Beacon[] }` | Ranging update (fires ~1/sec while in region) |
+| `onBluetoothStateChanged` | `{ state: string }` | Bluetooth hardware state changed |
+| `onError` | `{ error: string, region?: string }` | Monitoring or location error |
+| `onDebug` | `{ message: string }` | Internal state machine transition |
+
+### Beacon Object
+
+```typescript
+{
+  uuid: string;
+  major: number;
+  minor: number;
+  distance: number;  // Estimated distance in meters (-1 if unknown)
+  rssi: number;      // Signal strength
+}
+```
+
+## iOS Behavior Notes
+
+- **Exit delay**: iOS intentionally delays `didExitRegion` by ~30 seconds to prevent false positives from signal bouncing. This module includes a ranging-based fallback that fires exit after 35 seconds of zero beacons.
+- **Permission flow**: iOS uses a two-step permission flow. Users first grant "When In Use", then iOS later prompts to upgrade to "Always". Background monitoring requires "Always" permission.
+- **App termination**: When the app is terminated, iOS continues monitoring. On a region event, iOS relaunches the app in the background and the module restores monitoring from persisted state.
+
+## Running the Example
+
+1. Clone the repo and install dependencies:
    ```bash
-   npm install
-   npm run build
+   npm install && npm run build
+   cd example && npm install
    ```
-3. Navigate into the `example` directory and install its dependencies:
-   ```bash
-   cd example
-   npm install
-   ```
-4. **Option A: Local Build (Requires Mac)**
-   Run the app on an iOS device using your local Xcode:
+
+2. Replace `XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX` in `example/App.tsx` with your beacon's UUID.
+
+3. Build and run:
+
+   **Local (requires Mac):**
    ```bash
    npx expo run:ios
    ```
 
-   **Option B: EAS Build (Cloud Build / Windows Users)**
-   If you are on Windows or prefer building in the cloud, use Expo Application Services:
+   **EAS Build (cloud / Windows):**
    ```bash
-   npm install -g eas-cli
+   npx expo install eas-cli
    eas login
    eas build -p ios --profile development
    ```
-   *This will generate a `.tar.gz` or `.ipa` that you can install directly onto your physical device.*
 
-*(Note: To fully test background beacon capabilities, you must deploy this to a physical iPhone rather than a simulator).*
+> **Note:** Beacon monitoring requires a physical iPhone — simulators do not support BLE.
+
+## Platform Support
+
+This module is **iOS only**. Android is not supported.
 
 ## Contributing
 
-Contributions are welcome! Please ensure that any added features remain un-opinionated and delegate complex JavaScript execution to `expo-task-manager`.
+Contributions are welcome! Please ensure any added features remain un-opinionated and delegate complex logic to `expo-task-manager`.

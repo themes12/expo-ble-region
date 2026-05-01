@@ -11,4 +11,5 @@ export type ExpoBleRegionModuleEvents = {
       rssi: number;
     }[];
   }) => void;
+  onError: (event: { error: string; region?: string }) => void;
 };

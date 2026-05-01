@@ -1,12 +1,26 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, Button, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, Button, ScrollView, StyleSheet, Platform } from 'react-native';
 import * as ExpoBleRegion from 'expo-ble-region';
 import * as TaskManager from 'expo-task-manager';
+import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
+import Constants from 'expo-constants';
 
-const ATTENDANCE_TASK = 'ATTENDANCE_TASK';
+// Set up the notification handler for the app
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
+
+
+const BACKGROUND_TASK = 'BACKGROUND_BEACON_TASK';
 
 // Define the background task outside of the component
-TaskManager.defineTask(ATTENDANCE_TASK, async ({ data, error }) => {
+TaskManager.defineTask(BACKGROUND_TASK, async ({ data, error }) => {
   if (error) {
     console.error('Task Error:', error);
     return;
@@ -18,22 +32,30 @@ TaskManager.defineTask(ATTENDANCE_TASK, async ({ data, error }) => {
 
     console.log(`[Background Task] Event: ${eventType}`, data);
 
-    // Example Attendance Logic: 
-    // If the event is beacons detected, and we find our specific beacon
     if (eventType === 'onBeaconsDetected' && beacons.length > 0) {
       console.log(`[Background Task] Detected ${beacons.length} beacons!`);
-
-      // TODO: Add logic to count 3 detections (e.g. using AsyncStorage or global variable if engine stays alive)
-      // Then send the HTTP request:
-      // fetch('https://your-server.com/attendance', { method: 'POST', body: JSON.stringify({ event: 'clock-in', beacons }) });
     }
 
     if (eventType === 'onEnterRegion') {
       console.log(`[Background Task] Entered region: ${region}`);
+      Notifications.scheduleNotificationAsync({
+        content: {
+          title: "Entered Region",
+          body: `You have entered region ${region}`,
+        },
+        trigger: null,
+      });
     }
 
     if (eventType === 'onExitRegion') {
       console.log(`[Background Task] Exited region: ${region}`);
+      Notifications.scheduleNotificationAsync({
+        content: {
+          title: "Exited Region",
+          body: `You have exited region ${region}`,
+        },
+        trigger: null,
+      });
     }
   }
 });
@@ -46,12 +68,15 @@ export default function App() {
 
   // Helper to append logs to our UI
   const addEvent = (msg: string) => {
-    setEvents((prev) => [msg, ...prev].slice(0, 15)); // Keep last 15
+    setEvents((prev) => [msg, ...prev].slice(0, 50)); // Keep last 50
   };
 
   useEffect(() => {
+    // Request local notification permissions on load
+    Notifications.requestPermissionsAsync();
+
     // Check if task is already registered
-    TaskManager.isTaskRegisteredAsync(ATTENDANCE_TASK).then(setIsTaskRegistered);
+    TaskManager.isTaskRegisteredAsync(BACKGROUND_TASK).then(setIsTaskRegistered);
 
     // Listen to module events
     const btSub = ExpoBleRegion.addListener('onBluetoothStateChanged', (event: { state: string }) => {
@@ -61,16 +86,30 @@ export default function App() {
 
     const enterSub = ExpoBleRegion.addListener('onEnterRegion', (event: { region: string }) => {
       addEvent(`Entered Region: ${event.region}`);
-      // ExpoBleRegion.sendLocalNotification('Enter Region', `You have entered region ${event.region}`);
+      Notifications.scheduleNotificationAsync({
+        content: { title: "Enter Region", body: `You have entered region ${event.region}` },
+        trigger: null,
+      });
     });
 
     const exitSub = ExpoBleRegion.addListener('onExitRegion', (event: { region: string }) => {
       addEvent(`Exited Region: ${event.region}`);
-      // ExpoBleRegion.sendLocalNotification('Exit Region', `You have exited region ${event.region}`);
+      Notifications.scheduleNotificationAsync({
+        content: { title: "Exit Region", body: `You have exited region ${event.region}` },
+        trigger: null,
+      });
     });
 
     const beaconSub = ExpoBleRegion.addListener('onBeaconsDetected', (event: any) => {
       addEvent(`Beacons Detected: ${event.beacons?.length || 0}`);
+    });
+
+    const errorSub = ExpoBleRegion.addListener('onError', (event: any) => {
+      addEvent(`❌ Error: ${event.error} ${event.region ? `(region: ${event.region})` : ''}`);
+    });
+
+    const debugSub = ExpoBleRegion.addListener('onDebug' as any, (event: any) => {
+      addEvent(`🔍 ${event.message}`);
     });
 
     return () => {
@@ -78,6 +117,8 @@ export default function App() {
       enterSub.remove();
       exitSub.remove();
       beaconSub.remove();
+      errorSub.remove();
+      debugSub.remove();
     };
   }, []);
 
@@ -119,15 +160,14 @@ export default function App() {
         <Button
           title="Start Scanning (Normal)"
           onPress={() => {
-            // Random valid UUID for testing
-            ExpoBleRegion.startScanning('108535a9-78fc-4547-9de7-903bec119230', {});
+            ExpoBleRegion.startScanning('XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX', {});
             addEvent('Started Scanning (Normal)...');
           }}
         />
         <Button
           title="Start Scanning (Background Task)"
           onPress={() => {
-            ExpoBleRegion.startScanningWithTask('108535a9-78fc-4547-9de7-903bec119230', ATTENDANCE_TASK, {});
+            ExpoBleRegion.startScanningWithTask('XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX', BACKGROUND_TASK, {});
             addEvent('Started Scanning with Background Task...');
             setIsTaskRegistered(true);
           }}
@@ -142,7 +182,7 @@ export default function App() {
         <Button
           title="Stop Scanning (Task)"
           onPress={() => {
-            ExpoBleRegion.stopScanningTask(ATTENDANCE_TASK);
+            ExpoBleRegion.stopScanningTask(BACKGROUND_TASK);
             addEvent('Stopped Scanning Task.');
             setIsTaskRegistered(false);
           }}

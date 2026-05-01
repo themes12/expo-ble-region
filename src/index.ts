@@ -16,12 +16,12 @@ export function stopScanning(): void {
   ExpoBleRegionModule.stopScanning();
 }
 
-export function startScanningWithTask(uuid: string, taskName: string, config?: Record<string, any>): void {
-  ExpoBleRegionModule.startScanningWithTask(uuid, taskName, config);
+export async function startScanningWithTask(uuid: string, taskName: string, config?: Record<string, any>): Promise<void> {
+  await ExpoBleRegionModule.startScanningWithTask(uuid, taskName, config);
 }
 
-export function stopScanningTask(taskName: string): void {
-  ExpoBleRegionModule.stopScanningTask(taskName);
+export async function stopScanningTask(taskName: string): Promise<void> {
+  await ExpoBleRegionModule.stopScanningTask(taskName);
 }
 
 export function initializeBluetoothManager(): void {
@@ -41,8 +41,9 @@ export async function getAuthorizationStatus(): Promise<string> {
 }
 
 export function addListener(
-  eventName: 'onBluetoothStateChanged' | 'onEnterRegion' | 'onExitRegion' | 'onBeaconsDetected',
+  eventName: 'onBluetoothStateChanged' | 'onEnterRegion' | 'onExitRegion' | 'onBeaconsDetected' | 'onError',
   listener: (event: any) => void
 ): EventSubscription {
   return ExpoBleRegionModule.addListener(eventName, listener);
 }
+

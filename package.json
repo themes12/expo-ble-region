@@ -1,6 +1,6 @@
 {
   "name": "expo-ble-region",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Native Expo module for iOS that enables BLE beacon region monitoring (iBeacon) with background enter/exit events.",
   "main": "build/index.js",
   "types": "build/index.d.ts",

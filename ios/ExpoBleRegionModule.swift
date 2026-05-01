@@ -46,18 +46,99 @@ public class BleRegionManager: NSObject, CLLocationManagerDelegate, CBCentralMan
   
   var taskConsumer: ExpoBleRegionTaskConsumer?
   var onEvent: ((String, [String: Any]) -> Void)?
+  var isMonitoring: Bool = false
+  var lastBeaconSeenTime: Date?
+
+  /// Persisted to UserDefaults so background relaunches know the previous state
+  /// and don't fire false enter/exit events.
+  var lastState: CLRegionState = .unknown {
+    didSet {
+      UserDefaults.standard.set(lastState.rawValue, forKey: "ExpoBleRegion_lastState")
+    }
+  }
   
   private override init() {
     super.init()
+    // Restore persisted state for background relaunch
+    let saved = UserDefaults.standard.integer(forKey: "ExpoBleRegion_lastState")
+    if let restored = CLRegionState(rawValue: saved) {
+      lastState = restored
+    }
   }
   
-  func start() {
-    DispatchQueue.main.async {
-      if self.locationManager == nil {
-        self.locationManager = CLLocationManager()
-        self.locationManager?.delegate = self
+  private func handleStateChange(state: CLRegionState, for region: CLBeaconRegion) {
+    let stateStr = state == .inside ? "inside" : state == .outside ? "outside" : "unknown"
+    let lastStr = lastState == .inside ? "inside" : lastState == .outside ? "outside" : "unknown"
+    onEvent?("onDebug", ["message": "state=\(stateStr) lastState=\(lastStr) region=\(region.identifier)"])
+
+    if state == .inside && lastState != .inside {
+      onEvent?("onDebug", ["message": "-> Firing onEnterRegion"])
+      // Route to ONE path only to avoid duplicate notifications:
+      // Foreground → JS listener (updates UI + sends notification)
+      // Background → headless JS task (sends notification)
+      if UIApplication.shared.applicationState == .active {
+        onEvent?("onEnterRegion", ["region": region.identifier])
+      } else {
+        taskConsumer?.task?.execute(withData: ["eventType": "onEnterRegion", "region": region.identifier], withError: nil)
+      }
+      lastState = .inside
+      lastBeaconSeenTime = Date()
+    } else if state == .outside && lastState == .inside {
+      onEvent?("onDebug", ["message": "-> Firing onExitRegion"])
+      if UIApplication.shared.applicationState == .active {
+        onEvent?("onExitRegion", ["region": region.identifier])
+      } else {
+        taskConsumer?.task?.execute(withData: ["eventType": "onExitRegion", "region": region.identifier], withError: nil)
+      }
+      lastState = .outside
+    } else if state == .outside && lastState == .unknown {
+      onEvent?("onDebug", ["message": "-> Suppressed initial outside state"])
+      lastState = .outside
+    } else {
+      onEvent?("onDebug", ["message": "-> Ignored (duplicate state)"])
+    }
+  }
+
+  /// Starts monitoring and ranging for the stored beacon region.
+  /// This is the single source of truth for starting monitoring. Called either from
+  /// startScanning (if already authorized) or from locationManagerDidChangeAuthorization.
+  func beginMonitoring() {
+    guard let region = beaconRegion else {
+      onEvent?("onDebug", ["message": "beginMonitoring: no beacon region configured"])
+      return
+    }
+    guard !isMonitoring else {
+      onEvent?("onDebug", ["message": "beginMonitoring: already monitoring, skipping"])
+      return
+    }
+
+    isMonitoring = true
+    // NOTE: Do NOT reset lastState here. It's only reset in startScanning.
+    // On background relaunch, we need to preserve the state to avoid false enter/exit.
+    locationManager?.startMonitoring(for: region)
+    locationManager?.requestState(for: region)
+    if #available(iOS 13.0, *) {
+      locationManager?.startRangingBeacons(satisfying: region.beaconIdentityConstraint)
+    } else {
+      locationManager?.startRangingBeacons(in: region)
+    }
+    onEvent?("onDebug", ["message": "beginMonitoring: started monitoring + ranging for \(region.identifier)"])
+  }
+
+  /// Cleanly stops monitoring and ranging for the current region without destroying the location manager.
+  func stopCurrentMonitoring() {
+    if let region = beaconRegion {
+      locationManager?.stopMonitoring(for: region)
+      if #available(iOS 13.0, *) {
+        locationManager?.stopRangingBeacons(satisfying: region.beaconIdentityConstraint)
+      } else {
+        locationManager?.stopRangingBeacons(in: region)
       }
     }
+    isMonitoring = false
+    lastState = .unknown
+    lastBeaconSeenTime = nil
+    UserDefaults.standard.removeObject(forKey: "ExpoBleRegion_lastState")
   }
 
   /// Called whenever the Bluetooth hardware state changes (e.g., turned on, turned off).
@@ -77,28 +158,26 @@ public class BleRegionManager: NSObject, CLLocationManagerDelegate, CBCentralMan
 
   /// Called when the user enters the monitored iBeacon region.
   public func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
+    onEvent?("onDebug", ["message": "iOS callback: didEnterRegion"])
     if let beaconRegion = region as? CLBeaconRegion {
-      onEvent?("onEnterRegion", ["region": beaconRegion.identifier])
-      taskConsumer?.task?.execute(withData: ["eventType": "onEnterRegion", "region": beaconRegion.identifier], withError: nil)
+      handleStateChange(state: .inside, for: beaconRegion)
     }
   }
 
   /// Called to determine the initial state, or when requestState() is called.
   public func locationManager(_ manager: CLLocationManager, didDetermineState state: CLRegionState, for region: CLRegion) {
+    let s = state == .inside ? "inside" : state == .outside ? "outside" : "unknown"
+    onEvent?("onDebug", ["message": "iOS callback: didDetermineState(\(s))"])
     if let beaconRegion = region as? CLBeaconRegion {
-      if state == .inside {
-        onEvent?("onEnterRegion", ["region": beaconRegion.identifier])
-      } else if state == .outside {
-        onEvent?("onExitRegion", ["region": beaconRegion.identifier])
-      }
+      handleStateChange(state: state, for: beaconRegion)
     }
   }
 
   /// Called when the user exits the monitored iBeacon region.
   public func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
+    onEvent?("onDebug", ["message": "iOS callback: didExitRegion"])
     if let beaconRegion = region as? CLBeaconRegion {
-      onEvent?("onExitRegion", ["region": beaconRegion.identifier])
-      taskConsumer?.task?.execute(withData: ["eventType": "onExitRegion", "region": beaconRegion.identifier], withError: nil)
+      handleStateChange(state: .outside, for: beaconRegion)
     }
   }
 
@@ -114,7 +193,30 @@ public class BleRegionManager: NSObject, CLLocationManagerDelegate, CBCentralMan
       ]
     }
     onEvent?("onBeaconsDetected", ["beacons": beaconArray])
-    taskConsumer?.task?.execute(withData: ["eventType": "onBeaconsDetected", "beacons": beaconArray], withError: nil)
+
+    // Ranging-based exit fallback:
+    // iOS's didExitRegion is unreliable in some conditions.
+    // If we're "inside" and ranging returns 0 beacons for 35+ seconds, fire exit ourselves.
+    if !beacons.isEmpty {
+      lastBeaconSeenTime = Date()
+    } else if lastState == .inside, let lastSeen = lastBeaconSeenTime {
+      let elapsed = Date().timeIntervalSince(lastSeen)
+      if elapsed >= 35 {
+        onEvent?("onDebug", ["message": "Ranging-based exit: no beacons for \(Int(elapsed))s, firing exit"])
+        lastBeaconSeenTime = nil
+        handleStateChange(state: .outside, for: region)
+      }
+    }
+  }
+
+  /// Called when monitoring fails for a region (e.g., too many regions, invalid UUID).
+  public func locationManager(_ manager: CLLocationManager, monitoringDidFailFor region: CLRegion?, withError error: Error) {
+    onEvent?("onError", ["error": error.localizedDescription, "region": region?.identifier ?? "unknown"])
+  }
+
+  /// Called when the location manager encounters a general error.
+  public func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+    onEvent?("onError", ["error": error.localizedDescription])
   }
 
   /// Called when the user's location authorization status changes (e.g., they grant permission).
@@ -126,16 +228,11 @@ public class BleRegionManager: NSObject, CLLocationManagerDelegate, CBCentralMan
       status = CLLocationManager.authorizationStatus()
     }
     
+    onEvent?("onDebug", ["message": "Auth changed: \(statusToString(status))"])
+    
+    // When permission is granted, start monitoring if we have a pending region
     if status == .authorizedAlways || status == .authorizedWhenInUse {
-      if let beaconRegion = self.beaconRegion {
-        self.locationManager?.startMonitoring(for: beaconRegion)
-        self.locationManager?.requestState(for: beaconRegion)
-        if #available(iOS 13.0, *) {
-          self.locationManager?.startRangingBeacons(satisfying: beaconRegion.beaconIdentityConstraint)
-        } else {
-          self.locationManager?.startRangingBeacons(in: beaconRegion)
-        }
-      }
+      beginMonitoring()
     }
   }
 }
@@ -150,7 +247,7 @@ public class ExpoBleRegionModule: Module {
     Name("ExpoBleRegion")
 
     // Declare the events that this module can send to JS.
-    Events("onBluetoothStateChanged", "onEnterRegion", "onExitRegion", "onBeaconsDetected")
+    Events("onBluetoothStateChanged", "onEnterRegion", "onExitRegion", "onBeaconsDetected", "onError", "onDebug")
 
     // Called once when the module is created.
     OnCreate {
@@ -221,34 +318,48 @@ public class ExpoBleRegionModule: Module {
     DispatchQueue.main.async {
       let manager = BleRegionManager.shared
       
+      // Create location manager if needed
       if manager.locationManager == nil {
-          manager.locationManager = CLLocationManager()
-          manager.locationManager?.delegate = manager
+        manager.locationManager = CLLocationManager()
+        manager.locationManager?.delegate = manager
       }
       
-      manager.locationManager?.requestAlwaysAuthorization()
-      
-      // Only allow background location updates if the developer actually added 'location' to UIBackgroundModes in Info.plist.
-      // If we don't check this, the app will instantly crash with an NSInternalInconsistencyException!
+      // Configure background location if available
       if let backgroundModes = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String], backgroundModes.contains("location") {
         manager.locationManager?.allowsBackgroundLocationUpdates = true
       }
       manager.locationManager?.pausesLocationUpdatesAutomatically = false
 
       if let uuid = UUID(uuidString: uuidStr) {
+        // IMPORTANT: Stop any existing monitoring cleanly before starting fresh.
+        // Without this, iOS's monitoring state machine gets corrupted and didExitRegion won't fire.
+        manager.stopCurrentMonitoring()
+
+        // Persist UUID so AppDelegate can restore monitoring after app termination
+        UserDefaults.standard.set(uuidStr, forKey: "ExpoBleRegion_lastUUID")
         let beaconConstraint = CLBeaconIdentityConstraint(uuid: uuid)
         manager.beaconRegion = CLBeaconRegion(beaconIdentityConstraint: beaconConstraint, identifier: "BeaconManagerRegion")
         manager.beaconRegion?.notifyOnEntry = true
         manager.beaconRegion?.notifyOnExit = true
 
-        if let region = manager.beaconRegion {
-          manager.locationManager?.startMonitoring(for: region)
-          manager.locationManager?.requestState(for: region) // <--- Fetches the initial state immediately!
-          if #available(iOS 13.0, *) {
-            manager.locationManager?.startRangingBeacons(satisfying: region.beaconIdentityConstraint)
-          } else {
-            manager.locationManager?.startRangingBeacons(in: region)
-          }
+        // Check current permission status
+        let status: CLAuthorizationStatus
+        if #available(iOS 14.0, *) {
+          status = manager.locationManager?.authorizationStatus ?? .notDetermined
+        } else {
+          status = CLLocationManager.authorizationStatus()
+        }
+        
+        manager.onEvent?("onDebug", ["message": "startScanning: permission=\(statusToString(status))"])
+        
+        if status == .authorizedAlways || status == .authorizedWhenInUse {
+          // Already authorized — start monitoring now
+          manager.beginMonitoring()
+        } else {
+          // Not yet authorized — request permission.
+          // Monitoring will start automatically in locationManagerDidChangeAuthorization
+          manager.onEvent?("onDebug", ["message": "startScanning: requesting permission, monitoring will start after grant"])
+          manager.locationManager?.requestAlwaysAuthorization()
         }
       }
     }
@@ -256,16 +367,12 @@ public class ExpoBleRegionModule: Module {
 
   /// Stops monitoring and ranging for the active iBeacon region and cleans up managers.
   private func stopScanning() {
-    let manager = BleRegionManager.shared
-    if let beaconRegion = manager.beaconRegion {
-      manager.locationManager?.stopMonitoring(for: beaconRegion)
-      if #available(iOS 13.0, *) {
-        manager.locationManager?.stopRangingBeacons(satisfying: beaconRegion.beaconIdentityConstraint)
-      } else {
-        manager.locationManager?.stopRangingBeacons(in: beaconRegion)
-      }
+    DispatchQueue.main.async {
+      let manager = BleRegionManager.shared
+      manager.stopCurrentMonitoring()
       manager.beaconRegion = nil
       manager.locationManager = nil
+      UserDefaults.standard.removeObject(forKey: "ExpoBleRegion_lastUUID")
     }
   }
 
@@ -310,10 +417,11 @@ public class ExpoBleRegionModule: Module {
 
   /// Retrieves the current location authorization status without prompting the user.
   private func getAuthorizationStatus() -> String {
+    let manager = BleRegionManager.shared
     let status: CLAuthorizationStatus
     if #available(iOS 14.0, *) {
-      let tempManager = CLLocationManager()
-      status = tempManager.authorizationStatus
+      // Reuse existing manager if available, otherwise fall back
+      status = manager.locationManager?.authorizationStatus ?? CLLocationManager().authorizationStatus
     } else {
       status = CLLocationManager.authorizationStatus()
     }
