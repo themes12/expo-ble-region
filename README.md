@@ -2,6 +2,8 @@
 
 [![npm](https://img.shields.io/npm/v/expo-ble-region)](https://www.npmjs.com/package/expo-ble-region)
 
+> **Note:** This module currently only works with **Expo 54** (tested).
+
 A native Expo module for iOS iBeacon region monitoring with foreground and background enter/exit events. Uses `CoreLocation` for beacon detection and integrates with Expo's `TaskManager` for headless background JavaScript execution — even when the app is terminated.
 
 ## Features
