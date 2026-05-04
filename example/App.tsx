@@ -29,30 +29,34 @@ TaskManager.defineTask(BACKGROUND_TASK, async ({ data, error }) => {
     const eventType = (data as any).eventType;
     const beacons = (data as any).beacons || [];
     const region = (data as any).region;
+    const regionLabel = typeof region === 'string' ? region : region?.identifier || 'unknown';
 
     console.log(`[Background Task] Event: ${eventType}`, data);
 
     if (eventType === 'onBeaconsDetected' && beacons.length > 0) {
-      console.log(`[Background Task] Detected ${beacons.length} beacons!`);
+      console.log(`[Background Task] Detected ${beacons.length} beacons in background`, {
+        region,
+        beacons,
+      });
     }
 
     if (eventType === 'onEnterRegion') {
-      console.log(`[Background Task] Entered region: ${region}`);
+      console.log(`[Background Task] Entered region:`, region);
       Notifications.scheduleNotificationAsync({
         content: {
           title: "Entered Region",
-          body: `You have entered region ${region}`,
+          body: `You have entered region ${regionLabel}`,
         },
         trigger: null,
       });
     }
 
     if (eventType === 'onExitRegion') {
-      console.log(`[Background Task] Exited region: ${region}`);
+      console.log(`[Background Task] Exited region:`, region);
       Notifications.scheduleNotificationAsync({
         content: {
           title: "Exited Region",
-          body: `You have exited region ${region}`,
+          body: `You have exited region ${regionLabel}`,
         },
         trigger: null,
       });
@@ -259,3 +263,6 @@ const styles = StyleSheet.create({
     marginVertical: 2,
   },
 });
+
+
+

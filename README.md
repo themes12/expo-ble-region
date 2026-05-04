@@ -4,16 +4,16 @@
 
 > **Note:** This module currently only works with **Expo 54** (tested).
 
-A native Expo module for iOS iBeacon region monitoring with foreground and background enter/exit events. Uses `CoreLocation` for beacon detection and integrates with Expo's `TaskManager` for headless background JavaScript execution — even when the app is terminated.
+A native Expo module for iOS iBeacon region monitoring with foreground and background enter/exit events. Uses `CoreLocation` for beacon detection and integrates with Expo's `TaskManager` for headless background JavaScript execution - even when the app is terminated.
 
 ## Features
 
-- **Foreground monitoring** — Real-time enter/exit/ranging events via JS listeners
-- **Background monitoring** — Headless JS task execution via `expo-task-manager`
-- **State persistence** — Survives app termination; iOS relaunches the app for region events
-- **Smart event routing** — Foreground events go to JS listeners, background events go to the task consumer (no duplicate notifications)
-- **Debug events** — `onDebug` event stream for real-time observability of the native state machine
-- **Ranging-based exit fallback** — Detects beacon disappearance even when iOS's `didExitRegion` is delayed
+- **Foreground monitoring** - Real-time enter/exit/ranging events via JS listeners
+- **Background monitoring** - Headless JS task execution via `expo-task-manager`
+- **State persistence** - Survives app termination; iOS relaunches the app for region events
+- **Smart event routing** - Foreground events go to JS listeners, background events go to the task consumer (no duplicate notifications)
+- **Debug events** - `onDebug` event stream for real-time observability of the native state machine
+- **Ranging-based exit fallback** - Detects beacon disappearance even when iOS's `didExitRegion` is delayed
 
 ## Installation
 
@@ -120,17 +120,25 @@ TaskManager.defineTask(BACKGROUND_TASK, async ({ data, error }) => {
 
   if (data) {
     const { eventType, region, beacons } = data as any;
+    const regionLabel = typeof region === 'string' ? region : region?.identifier ?? 'unknown';
+
+    if (eventType === 'onBeaconsDetected' && beacons?.length) {
+      console.log('Background ranging update:', {
+        region,
+        beacons,
+      });
+    }
 
     if (eventType === 'onEnterRegion') {
       await Notifications.scheduleNotificationAsync({
-        content: { title: 'Entered Region', body: `Entered ${region}` },
+        content: { title: 'Entered Region', body: `Entered ${regionLabel}` },
         trigger: null,
       });
     }
 
     if (eventType === 'onExitRegion') {
       await Notifications.scheduleNotificationAsync({
-        content: { title: 'Exited Region', body: `Exited ${region}` },
+        content: { title: 'Exited Region', body: `Exited ${regionLabel}` },
         trigger: null,
       });
     }
@@ -150,6 +158,12 @@ export default function App() {
   // ...
 }
 ```
+
+Background task payloads differ slightly from foreground listeners:
+
+- `onEnterRegion` / `onExitRegion` provide `region` as an object with `identifier`, `uuid`, and optional `major` / `minor`
+- `onBeaconsDetected` is delivered to the task while the app is backgrounded and includes `beacons: Beacon[]`
+- foreground listeners remain unchanged and still receive string `region` values for enter/exit
 
 ### Bluetooth State
 
@@ -175,12 +189,23 @@ ExpoBleRegion.addListener('onDebug', ({ message }) => {
 
 | Event | Payload | Description |
 |-------|---------|-------------|
-| `onEnterRegion` | `{ region: string }` | Device entered a beacon region |
-| `onExitRegion` | `{ region: string }` | Device exited a beacon region |
-| `onBeaconsDetected` | `{ beacons: Beacon[] }` | Ranging update (fires ~1/sec while in region) |
+| `onEnterRegion` | `{ region: string }` (foreground), `{ region: BackgroundRegion }` (background task) | Device entered a beacon region |
+| `onExitRegion` | `{ region: string }` (foreground), `{ region: BackgroundRegion }` (background task) | Device exited a beacon region |
+| `onBeaconsDetected` | `{ beacons: Beacon[] }` (foreground and background task) | Ranging update (fires ~1/sec while in region) |
 | `onBluetoothStateChanged` | `{ state: string }` | Bluetooth hardware state changed |
 | `onError` | `{ error: string, region?: string }` | Monitoring or location error |
 | `onDebug` | `{ message: string }` | Internal state machine transition |
+
+### BackgroundRegion Object
+
+```typescript
+{
+  identifier: string;
+  uuid: string;
+  major?: number;
+  minor?: number;
+}
+```
 
 ### Beacon Object
 
@@ -224,7 +249,7 @@ ExpoBleRegion.addListener('onDebug', ({ message }) => {
    eas build -p ios --profile development
    ```
 
-> **Note:** Beacon monitoring requires a physical iPhone — simulators do not support BLE.
+> **Note:** Beacon monitoring requires a physical iPhone - simulators do not support BLE.
 
 ## Platform Support
 

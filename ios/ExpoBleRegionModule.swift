@@ -65,6 +65,23 @@ public class BleRegionManager: NSObject, CLLocationManagerDelegate, CBCentralMan
       lastState = restored
     }
   }
+
+  private func serializeRegion(_ region: CLBeaconRegion) -> [String: Any] {
+    var payload: [String: Any] = [
+      "identifier": region.identifier,
+      "uuid": region.uuid.uuidString
+    ]
+
+    if let major = region.major?.intValue {
+      payload["major"] = major
+    }
+
+    if let minor = region.minor?.intValue {
+      payload["minor"] = minor
+    }
+
+    return payload
+  }
   
   private func handleStateChange(state: CLRegionState, for region: CLBeaconRegion) {
     let stateStr = state == .inside ? "inside" : state == .outside ? "outside" : "unknown"
@@ -79,7 +96,7 @@ public class BleRegionManager: NSObject, CLLocationManagerDelegate, CBCentralMan
       if UIApplication.shared.applicationState == .active {
         onEvent?("onEnterRegion", ["region": region.identifier])
       } else {
-        taskConsumer?.task?.execute(withData: ["eventType": "onEnterRegion", "region": region.identifier], withError: nil)
+        taskConsumer?.task?.execute(withData: ["eventType": "onEnterRegion", "region": serializeRegion(region)], withError: nil)
       }
       lastState = .inside
       lastBeaconSeenTime = Date()
@@ -88,7 +105,7 @@ public class BleRegionManager: NSObject, CLLocationManagerDelegate, CBCentralMan
       if UIApplication.shared.applicationState == .active {
         onEvent?("onExitRegion", ["region": region.identifier])
       } else {
-        taskConsumer?.task?.execute(withData: ["eventType": "onExitRegion", "region": region.identifier], withError: nil)
+        taskConsumer?.task?.execute(withData: ["eventType": "onExitRegion", "region": serializeRegion(region)], withError: nil)
       }
       lastState = .outside
     } else if state == .outside && lastState == .unknown {
@@ -192,7 +209,15 @@ public class BleRegionManager: NSObject, CLLocationManagerDelegate, CBCentralMan
         "rssi": beacon.rssi
       ]
     }
-    onEvent?("onBeaconsDetected", ["beacons": beaconArray])
+    if UIApplication.shared.applicationState == .active {
+      onEvent?("onBeaconsDetected", ["beacons": beaconArray])
+    } else {
+      taskConsumer?.task?.execute(withData: [
+        "eventType": "onBeaconsDetected",
+        "region": serializeRegion(region),
+        "beacons": beaconArray
+      ], withError: nil)
+    }
 
     // Ranging-based exit fallback:
     // iOS's didExitRegion is unreliable in some conditions.

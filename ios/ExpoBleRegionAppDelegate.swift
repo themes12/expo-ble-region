@@ -19,6 +19,7 @@ public class ExpoBleRegionAppDelegate: ExpoAppDelegateSubscriber {
           manager.beaconRegion = CLBeaconRegion(beaconIdentityConstraint: constraint, identifier: "BeaconManagerRegion")
           manager.beaconRegion?.notifyOnEntry = true
           manager.beaconRegion?.notifyOnExit = true
+          manager.beginMonitoring()
         }
       }
     }

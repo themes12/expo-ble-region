@@ -1,4 +1,4 @@
-import { NativeModule, requireNativeModule } from 'expo-modules-core';
+import { NativeModule, requireOptionalNativeModule } from 'expo-modules-core';
 
 import { ExpoBleRegionModuleEvents } from './ExpoBleRegion.types';
 
@@ -13,5 +13,20 @@ declare class ExpoBleRegionModule extends NativeModule<ExpoBleRegionModuleEvents
   getAuthorizationStatus(): Promise<string>;
 }
 
-// This call loads the native module object from the JSI.
-export default requireNativeModule<ExpoBleRegionModule>('ExpoBleRegion');
+const module = requireOptionalNativeModule<ExpoBleRegionModule>('ExpoBleRegion');
+
+const dummyModule = {
+  startScanning: () => {},
+  startScanningWithTask: async () => {},
+  stopScanning: () => {},
+  stopScanningTask: async () => {},
+  initializeBluetoothManager: () => {},
+  requestAlwaysAuthorization: async () => ({ status: 'unsupported' }),
+  requestWhenInUseAuthorization: async () => ({ status: 'unsupported' }),
+  getAuthorizationStatus: async () => 'unsupported',
+  addListener: () => ({ remove: () => {} }),
+  removeListener: () => {},
+  removeAllListeners: () => {},
+} as unknown as ExpoBleRegionModule;
+
+export default module ?? dummyModule;
